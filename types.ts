@@ -1,3 +1,10 @@
+export interface Reajuste {
+  data: string;
+  valorAnterior: string;
+  novoValor: string;
+  motivo: string;
+}
+
 export interface FormData {
   // 1. Dados da Empresa
   razaoSocial: string;
@@ -14,6 +21,7 @@ export interface FormData {
   // 2. Dados do Responsável Legal
   responsavelNomeCompleto: string;
   responsavelCpf: string;
+  dataNascimento: string;
   responsavelCargo: string;
   responsavelCelular: string;
   responsavelEmail: string;
@@ -29,12 +37,18 @@ export interface FormData {
   dataInicio: string;
   gestorDireto: string;
   areaProjeto: string;
+  centroCusto: string;
   valorMensal: string;
   formaPagamento: 'pix' | 'transferencia' | 'outro' | '';
   formaPagamentoOutro: string;
   dataLimiteNF: string;
   dataPrevistaPagamento: string;
+  dataFim?: string | null;
+  daysOffRestantes?: number;
   
+  // 5. Histórico de Reajustes
+  historicoReajustes?: Reajuste[];
+
   // 6. Declaração
   declaracao: boolean;
 }

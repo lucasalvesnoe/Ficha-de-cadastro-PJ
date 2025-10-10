@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ficha Cadastral PJ</title>
+    <title>Intelliway - Gestão PJ</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,20 +12,22 @@
     <style>
       body {
         font-family: 'Inter', sans-serif;
+        background-color: #f1f5f9; /* slate-100 */
       }
       /* Custom scrollbar for better aesthetics */
       ::-webkit-scrollbar {
         width: 8px;
+        height: 8px;
       }
       ::-webkit-scrollbar-track {
         background: #f1f1f1;
       }
       ::-webkit-scrollbar-thumb {
-        background: #888;
+        background: #aab2c0;
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #555;
+        background: #8892a3;
       }
     </style>
   <script type="importmap">
@@ -33,13 +35,17 @@
   "imports": {
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^6.25.1",
+    "recharts": "https://aistudiocdn.com/recharts@^2.13.0",
+    "date-fns/": "https://aistudiocdn.com/date-fns@^4.1.0/",
+    "date-fns": "https://aistudiocdn.com/date-fns@^4.1.0"
   }
 }
 </script>
 </head>
-  <body class="bg-slate-50">
+  <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <script type="module" src="./index.tsx?v=2"></script>
   </body>
 </html>
