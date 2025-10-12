@@ -52,6 +52,7 @@ export const mockPJData: FormData[] = [
     historicoReajustes: [
         { data: '2023-08-01', valorAnterior: '10000', novoValor: '12000', motivo: 'Reajuste anual' }
     ],
+    documentos: [],
     declaracao: true,
   },
   {
@@ -87,6 +88,7 @@ export const mockPJData: FormData[] = [
     dataPrevistaPagamento: new Date(new Date().setDate(new Date().getDate() + 25)).toISOString().split('T')[0],
     dataFim: null,
     daysOffRestantes: 12,
+    documentos: [],
     declaracao: true,
   },
   {
@@ -125,6 +127,7 @@ export const mockPJData: FormData[] = [
     historicoReajustes: [
         { data: '2024-06-01', valorAnterior: '10000', novoValor: '10500', motivo: 'Ajuste de escopo' }
     ],
+    documentos: [],
     declaracao: true,
   },
     {
@@ -160,6 +163,7 @@ export const mockPJData: FormData[] = [
     dataPrevistaPagamento: new Date(new Date().setDate(new Date().getDate() + 120)).toISOString().split('T')[0],
     dataFim: '2023-12-31', // Already terminated
     daysOffRestantes: 0,
+    documentos: [],
     declaracao: true,
   },
 ];

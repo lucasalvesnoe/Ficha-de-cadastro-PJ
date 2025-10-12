@@ -4,6 +4,9 @@ interface FileUploadProps {
   id: string;
   title: string;
   onFilesChange: (files: File[]) => void;
+  isAnalyzing?: boolean;
+  analysisError?: string;
+  analysisMessage?: string;
 }
 
 const FileUploadIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -19,22 +22,23 @@ const FileIcon: React.FC<{ className?: string }> = ({ className }) => (
 );
 
 
-const FileUpload: React.FC<FileUploadProps> = ({ id, title, onFilesChange }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ id, title, onFilesChange, isAnalyzing = false, analysisError = '', analysisMessage = 'Analisando documento...' }) => {
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       const newFiles = Array.from(event.target.files);
-      const updatedFiles = [...files, ...newFiles];
-      setFiles(updatedFiles);
-      onFilesChange(updatedFiles);
+      // For simplicity in this use case, we replace the file instead of appending
+      setFiles(newFiles);
+      onFilesChange(newFiles);
     }
   };
 
   const triggerFileSelect = useCallback(() => {
+    if (isAnalyzing) return;
     fileInputRef.current?.click();
-  }, []);
+  }, [isAnalyzing]);
   
   const removeFile = (index: number) => {
     const updatedFiles = files.filter((_, i) => i !== index);
@@ -47,27 +51,39 @@ const FileUpload: React.FC<FileUploadProps> = ({ id, title, onFilesChange }) => 
         <h3 className="text-lg font-semibold text-gray-800 mb-2">{title}</h3>
         <div 
             onClick={triggerFileSelect}
-            className="bg-slate-50 p-6 rounded-lg border border-gray-200 text-center cursor-pointer hover:bg-slate-100 transition-colors duration-200"
+            className={`bg-slate-50 p-6 rounded-lg border-2 border-dashed border-slate-300 text-center transition-colors duration-200 ${isAnalyzing ? 'cursor-not-allowed bg-slate-200' : 'cursor-pointer hover:bg-slate-100 hover:border-cyan-500'}`}
             role="button"
             aria-labelledby={`${id}-label`}
         >
-            <FileUploadIcon className="w-10 h-10 mx-auto text-gray-400" />
-            <p id={`${id}-label`} className="mt-2 text-sm text-gray-600">
-                <span className="font-semibold text-cyan-600">Clique para enviar</span> ou arraste e solte
-            </p>
-            <p className="text-xs text-gray-500 mt-1">PDF, DOCX, PNG, JPG, etc.</p>
-            <input
+            {isAnalyzing ? (
+                <div className="h-24 flex flex-col justify-center items-center">
+                    <svg className="animate-spin h-8 w-8 text-cyan-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <p className="mt-3 text-sm text-cyan-700 font-medium">{analysisMessage}</p>
+                </div>
+            ) : (
+                <div className="h-24 flex flex-col justify-center items-center">
+                    <FileUploadIcon className="w-10 h-10 mx-auto text-gray-400" />
+                    <p id={`${id}-label`} className="mt-2 text-sm text-gray-600">
+                        <span className="font-semibold text-cyan-600">Clique para enviar</span> ou arraste
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">PDF, PNG, JPG</p>
+                </div>
+            )}
+             <input
                 type="file"
                 id={id}
-                multiple
+                multiple={false} // Only allow one file for AI analysis at a time
                 ref={fileInputRef}
                 onChange={handleFileChange}
                 className="hidden"
-                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                accept=".pdf,.jpg,.jpeg,.png"
+                disabled={isAnalyzing}
             />
         </div>
+
+        {analysisError && <p className="text-sm text-red-600 mt-2 text-center">{analysisError}</p>}
       
-      {files.length > 0 && (
+      {files.length > 0 && !isAnalyzing && (
         <div className="mt-4 space-y-2">
             <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md">
             {files.map((file, index) => (

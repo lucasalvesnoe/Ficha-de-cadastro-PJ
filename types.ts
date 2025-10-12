@@ -1,8 +1,43 @@
+
 export interface Reajuste {
   data: string;
   valorAnterior: string;
   novoValor: string;
   motivo: string;
+}
+
+export enum FileCategory {
+  CONTRATO_SOCIAL_MEI = 'contratoSocialMei',
+  CNPJ = 'cnpj',
+  GRADUACAO = 'graduacao',
+  CERTIFICACOES_POS_OUTROS = 'certificacoesPosOutros',
+  NOTA_FISCAL = 'notaFiscal', // Novo
+}
+
+export enum NFStatus {
+  PENDENTE = 'Pendente',
+  ATRASADA = 'Atrasada',
+  EM_ANALISE = 'Em Análise',
+  VALIDADA = 'Validada com IA',
+  ERRO_VALIDACAO = 'Erro de Validação',
+}
+
+
+export interface InvoiceState {
+    status: NFStatus;
+    errorMessage?: string;
+    validatedData?: {
+        cnpj: string;
+        valor: string;
+        dataEmissao: string;
+    }
+}
+
+export interface Documento {
+  nome: string;
+  categoria: FileCategory;
+  conteudo: string; // Base64 encoded content
+  mimeType: string;
 }
 
 export interface FormData {
@@ -49,18 +84,17 @@ export interface FormData {
   // 5. Histórico de Reajustes
   historicoReajustes?: Reajuste[];
 
-  // 6. Declaração
+  // 6. Documentos
+  documentos?: Documento[];
+
+  // 7. Declaração
   declaracao: boolean;
 }
 
-export enum FileCategory {
-  CONTRATO_SOCIAL_MEI = 'contratoSocialMei',
-  GRADUACAO = 'graduacao',
-  CERTIFICACOES_POS_OUTROS = 'certificacoesPosOutros',
-}
 
 export interface UploadedFiles {
   [FileCategory.CONTRATO_SOCIAL_MEI]: File[];
+  [FileCategory.CNPJ]: File[];
   [FileCategory.GRADUACAO]: File[];
   [FileCategory.CERTIFICACOES_POS_OUTROS]: File[];
 }

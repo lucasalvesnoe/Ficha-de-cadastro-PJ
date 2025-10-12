@@ -14,32 +14,39 @@ export const usePJData = () => {
       if (storedData) {
         setData(JSON.parse(storedData));
       } else {
-        // Se não houver dados, inicializa com os dados mockados
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(mockPJData));
-        setData(mockPJData);
+        // Se não houver dados, inicializa com um array vazio para não apagar os dados do usuário.
+        // O usuário pode importar dados ou começar do zero.
+        const initialData: FormData[] = [];
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(initialData));
+        setData(initialData);
       }
     } catch (error) {
       console.error("Failed to load data from localStorage", error);
-      // Em caso de erro, carrega os dados mockados como fallback
-      setData(mockPJData);
+      // Em caso de erro, carrega um array vazio como fallback
+      setData([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
   const addPJ = useCallback((newPJ: FormData) => {
-    const updatedData = [...data, newPJ];
-    setData(updatedData);
+    const updatedData = [...(data || []), newPJ];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+    setData(updatedData);
   }, [data]);
 
   const updatePJ = useCallback((updatedPJ: FormData) => {
-    const updatedData = data.map(pj => 
-      pj.cnpj === updatedPJ.cnpj ? updatedPJ : pj
-    );
-    setData(updatedData);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+     const updatedData = (data || []).map(pj => 
+       pj.cnpj === updatedPJ.cnpj ? updatedPJ : pj
+     );
+     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+     setData(updatedData);
   }, [data]);
 
-  return { data, loading, addPJ, updatePJ };
+  const importData = useCallback((importedData: FormData[]) => {
+    setData(importedData);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(importedData));
+  }, []);
+
+  return { data, loading, addPJ, updatePJ, importData };
 };

@@ -1,42 +1,24 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 
 import Cadastro from './pages/Cadastro';
 import Dashboard from './pages/Dashboard';
-import Login from './pages/Login';
 import Prestadores from './pages/Prestadores';
 import PrestadorDetalhe from './pages/PrestadorDetalhe';
+import NotasFiscais from './pages/NotasFiscais'; // Importa a nova página
 
 const App: React.FC = () => {
-  // Simulação de autenticação. Em uma aplicação real, isso seria um contexto de autenticação completo.
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-
   return (
     <Routes>
-      <Route path="/login" element={<Login onLogin={() => setIsAuthenticated(true)} />} />
       <Route path="/cadastro" element={<Cadastro />} />
-      <Route 
-        path="/dashboard" 
-        element={
-          isAuthenticated ? <Dashboard /> : <Navigate to="/login" />
-        } 
-      />
-      <Route 
-        path="/prestadores" 
-        element={
-          isAuthenticated ? <Prestadores /> : <Navigate to="/login" />
-        } 
-      />
-      <Route 
-        path="/prestadores/:cnpj" 
-        element={
-          isAuthenticated ? <PrestadorDetalhe /> : <Navigate to="/login" />
-        } 
-      />
-      {/* A rota padrão agora redireciona para o login */}
-      <Route path="/" element={<Navigate to="/login" />} />
-      {/* Redireciona qualquer rota não encontrada para o login */}
-      <Route path="*" element={<Navigate to="/login" />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/prestadores" element={<Prestadores />} />
+      <Route path="/prestadores/:cnpj" element={<PrestadorDetalhe />} />
+      <Route path="/notas-fiscais" element={<NotasFiscais />} /> {/* Adiciona a nova rota */}
+      {/* A rota padrão agora redireciona para o dashboard */}
+      <Route path="/" element={<Navigate to="/dashboard" />} />
+      {/* Redireciona qualquer rota não encontrada para o dashboard */}
+      <Route path="*" element={<Navigate to="/dashboard" />} />
     </Routes>
   );
 };

@@ -1,240 +1,395 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FormData, UploadedFiles, FileCategory } from '../types';
 import { usePJData } from '../hooks/usePJData';
+import { FormData, Documento, FileCategory } from '../types';
 import TextInput from '../components/TextInput';
 import FileUpload from '../components/FileUpload';
-import IntelliwayLogo from '../components/IntelliwayLogo';
+import Sidebar from '../components/Sidebar';
+import { GoogleGenAI, Type } from '@google/genai';
 
-const initialFormData: FormData = {
-  razaoSocial: '', nomeFantasia: '', cnpj: '', inscricaoEstadual: '',
-  enderecoComercial: '', cidade: '', uf: '', cep: '', telefoneComercial: '',
-  emailContato: '', responsavelNomeCompleto: '', responsavelCpf: '', dataNascimento: '',
-  responsavelCargo: '', responsavelCelular: '', responsavelEmail: '',
-  banco: '', agencia: '', conta: '', tipoConta: '', titularConta: '',
-  dataInicio: '', gestorDireto: '', areaProjeto: '', centroCusto: '', valorMensal: '',
-  formaPagamento: '', formaPagamentoOutro: '', dataLimiteNF: '',
-  dataPrevistaPagamento: '', declaracao: false,
+const initialState: FormData = {
+    // 1. Dados da Empresa
+    razaoSocial: '',
+    nomeFantasia: '',
+    cnpj: '',
+    inscricaoEstadual: '',
+    enderecoComercial: '',
+    cidade: '',
+    uf: '',
+    cep: '',
+    telefoneComercial: '',
+    emailContato: '',
+
+    // 2. Dados do Responsável Legal
+    responsavelNomeCompleto: '',
+    responsavelCpf: '',
+    dataNascimento: '',
+    responsavelCargo: '',
+    responsavelCelular: '',
+    responsavelEmail: '',
+
+    // 3. Dados Bancários
+    banco: '',
+    agencia: '',
+    conta: '',
+    tipoConta: '',
+    titularConta: '',
+
+    // 4. Informações Contratuais
+    dataInicio: '',
+    gestorDireto: '',
+    areaProjeto: '',
+    centroCusto: '',
+    valorMensal: '',
+    formaPagamento: '',
+    formaPagamentoOutro: '',
+    dataLimiteNF: '',
+    dataPrevistaPagamento: '',
+    daysOffRestantes: 15,
+    historicoReajustes: [],
+
+    // 6. Documentos
+    documentos: [],
+
+    // 7. Declaração
+    declaracao: false,
 };
 
-const initialFiles: UploadedFiles = {
-  [FileCategory.CONTRATO_SOCIAL_MEI]: [],
-  [FileCategory.GRADUACAO]: [],
-  [FileCategory.CERTIFICACOES_POS_OUTROS]: [],
-};
-
-const ChevronLeftIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-    </svg>
-);
-
+// Helper to convert file to base64
+const fileToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(',')[1]); 
+    };
+    reader.onerror = (error) => reject(error);
+  });
 
 const Cadastro: React.FC = () => {
-  const [formData, setFormData] = useState<FormData>(initialFormData);
-  const [files, setFiles] = useState<UploadedFiles>(initialFiles);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSubmitted, setIsSubmitted] = useState(false);
-  const { addPJ } = usePJData();
-  const navigate = useNavigate();
+    const navigate = useNavigate();
+    const { addPJ } = usePJData();
+    const [formData, setFormData] = useState<FormData>(initialState);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // States for AI analysis
+    const [isAnalyzingCNPJ, setIsAnalyzingCNPJ] = useState(false);
+    const [analysisErrorCNPJ, setAnalysisErrorCNPJ] = useState('');
+    const [isAnalyzingContract, setIsAnalyzingContract] = useState(false);
+    const [analysisErrorContract, setAnalysisErrorContract] = useState('');
+    const [analysisMessage, setAnalysisMessage] = useState('');
 
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value, type } = e.target;
-     if (type === 'checkbox') {
-        const { checked } = e.target as HTMLInputElement;
-        setFormData((prev) => ({ ...prev, [name]: checked }));
-    } else {
-        setFormData((prev) => ({ ...prev, [name]: value }));
-    }
-  }, []);
+     // Generic handler to store uploaded files in formData
+    const handleFilePersistence = async (files: File[], category: FileCategory) => {
+        if (files.length === 0) return;
+        const file = files[0];
+        try {
+            const base64Content = await fileToBase64(file);
+            const newDocument: Documento = {
+                nome: file.name,
+                categoria: category,
+                conteudo: base64Content,
+                mimeType: file.type,
+            };
+            // Remove existing doc of the same category before adding new one
+            setFormData(prev => ({
+                ...prev,
+                documentos: [...(prev.documentos || []).filter(d => d.categoria !== category), newDocument],
+            }));
+        } catch (error) {
+            console.error("Error processing file for persistence:", error);
+        }
+    };
 
-  const handleFileChange = useCallback((category: FileCategory) => (uploadedFiles: File[]) => {
-    setFiles((prev) => ({ ...prev, [category]: uploadedFiles }));
-  }, []);
+    // Generic function to handle AI-powered document analysis
+    const handleDocumentAnalysis = async (
+        file: File,
+        promptText: string,
+        schema: any,
+        setIsAnalyzing: React.Dispatch<React.SetStateAction<boolean>>,
+        setAnalysisError: React.Dispatch<React.SetStateAction<string>>
+    ) => {
+        setIsAnalyzing(true);
+        setAnalysisError('');
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!formData.declaracao) {
-      alert("Você precisa aceitar a declaração para continuar.");
-      return;
-    }
-    setIsSubmitting(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    addPJ({...formData, daysOffRestantes: 15}); // Adiciona 15 days off default para novos
-    setIsSubmitting(false);
-    setIsSubmitted(true);
-  };
-  
-  const handleReset = () => {
-    setFormData(initialFormData);
-    // Reset dos files precisa de uma implementação mais robusta se quisermos limpar os componentes filhos.
-    setIsSubmitted(false);
-  };
+        const messages = ["Extraindo conteúdo...", "Conferindo informações...", "Só um instantinho..."];
+        let messageIndex = 0;
+        setAnalysisMessage(messages[messageIndex]);
 
-  if (isSubmitted) {
+        const intervalId = setInterval(() => {
+            messageIndex = (messageIndex + 1) % messages.length;
+            setAnalysisMessage(messages[messageIndex]);
+        }, 2500);
+
+        try {
+            const base64Data = await fileToBase64(file);
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+
+            const imagePart = {
+                inlineData: { mimeType: file.type, data: base64Data },
+            };
+
+            const textPart = { text: promptText };
+
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: { parts: [imagePart, textPart] },
+                config: {
+                    responseMimeType: 'application/json',
+                    responseSchema: schema,
+                }
+            });
+            
+            const extractedData = JSON.parse(response.text);
+            setFormData(prev => ({ ...prev, ...extractedData }));
+
+        } catch (error)
+        {
+            console.error("Erro ao analisar documento:", error);
+            setAnalysisError('Falha ao extrair dados. Por favor, preencha manualmente.');
+        } finally {
+            clearInterval(intervalId);
+            setIsAnalyzing(false);
+            setAnalysisMessage('');
+        }
+    };
+
+    const handleCnpjFileChange = (newFiles: File[]) => {
+        handleFilePersistence(newFiles, FileCategory.CNPJ);
+        const file = newFiles[0];
+        if (!file) return;
+
+        const prompt = 'Analise a imagem deste Cartão CNPJ e extraia as informações de Razão Social, Nome Fantasia, CNPJ, Endereço Completo (logradouro e número), Cidade, UF e CEP. Retorne os dados em formato JSON.';
+        const schema = {
+            type: Type.OBJECT,
+            properties: {
+                razaoSocial: { type: Type.STRING },
+                nomeFantasia: { type: Type.STRING },
+                cnpj: { type: Type.STRING },
+                enderecoComercial: { type: Type.STRING },
+                cidade: { type: Type.STRING },
+                uf: { type: Type.STRING },
+                cep: { type: Type.STRING },
+            },
+        };
+        handleDocumentAnalysis(file, prompt, schema, setIsAnalyzingCNPJ, setAnalysisErrorCNPJ);
+    };
+    
+    const handleContractFileChange = (newFiles: File[]) => {
+        handleFilePersistence(newFiles, FileCategory.CONTRATO_SOCIAL_MEI);
+        const file = newFiles[0];
+        if (!file) return;
+
+        const prompt = 'Analise a imagem deste Contrato Social ou Certificado MEI. Extraia os dados da empresa (Razão Social, CNPJ, Endereço, Cidade, UF, CEP) e também os dados do responsável legal (Nome Completo, CPF e Data de Nascimento). A data de nascimento deve estar no formato YYYY-MM-DD. Retorne em formato JSON.';
+        const schema = {
+            type: Type.OBJECT,
+            properties: {
+                razaoSocial: { type: Type.STRING },
+                cnpj: { type: Type.STRING },
+                enderecoComercial: { type: Type.STRING },
+                cidade: { type: Type.STRING },
+                uf: { type: Type.STRING },
+                cep: { type: Type.STRING },
+                responsavelNomeCompleto: { type: Type.STRING },
+                responsavelCpf: { type: Type.STRING },
+                dataNascimento: { type: Type.STRING },
+            },
+        };
+        handleDocumentAnalysis(file, prompt, schema, setIsAnalyzingContract, setAnalysisErrorContract);
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+        const { name, value, type } = e.target;
+
+        if (type === 'checkbox') {
+            const { checked } = e.target as HTMLInputElement;
+            setFormData(prev => ({ ...prev, [name]: checked }));
+        } else {
+            setFormData(prev => ({ ...prev, [name]: value }));
+        }
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!formData.declaracao) {
+            alert('Você deve concordar com a declaração para prosseguir.');
+            return;
+        }
+
+        setIsSubmitting(true);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        addPJ(formData);
+        setIsSubmitting(false);
+
+        alert('Cadastro realizado com sucesso!');
+        navigate('/dashboard');
+    };
+    
+    const isAnalyzing = isAnalyzingCNPJ || isAnalyzingContract;
+
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="max-w-3xl mx-auto p-8 bg-white rounded-lg shadow-2xl text-center">
-            <IntelliwayLogo className="h-12 w-auto mx-auto mb-4" />
-            <svg className="mx-auto h-16 w-16 text-green-500 mt-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h2 className="mt-4 text-3xl font-bold text-gray-900">Cadastro Enviado com Sucesso!</h2>
-            <p className="mt-3 text-md text-gray-600">As informações foram salvas em nosso sistema.</p>
-            <div className="mt-8 flex flex-col sm:flex-row justify-center gap-4">
-              <button
-                type="button"
-                onClick={handleReset}
-                className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500"
-              >
-                Cadastrar Novo Colaborador
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/login')}
-                className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500"
-              >
-                Fazer Login
-              </button>
-            </div>
+        <div className="flex h-screen bg-slate-100">
+            <Sidebar />
+            <main className="flex-1 overflow-y-auto p-8">
+                <header className="text-center mb-10 max-w-4xl mx-auto">
+                    <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">Cadastro de Prestador (PJ)</h1>
+                    <p className="mt-3 text-lg text-gray-600">Um processo de homologação simples e inteligente.</p>
+                </header>
+
+                <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl mx-auto">
+
+                    {/* Onboarding Inteligente com IA */}
+                    <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md border-t-4 border-cyan-500">
+                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Onboarding Inteligente com IA</h2>
+                        <p className="text-gray-600 mb-6">Comece por aqui! Envie o Cartão CNPJ e o Contrato Social da sua empresa. Nossa IA irá ler os documentos e preencher os campos do formulário para você, agilizando todo o processo.</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <FileUpload
+                                id="cnpj-upload"
+                                title="1. Cartão CNPJ"
+                                onFilesChange={handleCnpjFileChange}
+                                isAnalyzing={isAnalyzingCNPJ}
+                                analysisError={analysisErrorCNPJ}
+                                analysisMessage={isAnalyzingCNPJ ? analysisMessage : ''}
+                            />
+                             <FileUpload 
+                                id="contratoSocialMei" 
+                                title="2. Contrato Social ou MEI" 
+                                onFilesChange={handleContractFileChange}
+                                isAnalyzing={isAnalyzingContract}
+                                analysisError={analysisErrorContract}
+                                analysisMessage={isAnalyzingContract ? analysisMessage : ''}
+                            />
+                        </div>
+                    </div>
+
+
+                    {/* 1. Dados da Empresa e Responsável Legal */}
+                    <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
+                        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">1. Dados da Empresa e Responsável Legal</h2>
+                        
+                        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                             <h3 className="sm:col-span-2 text-base font-semibold text-gray-600 -mb-2">Dados da Empresa</h3>
+                            <TextInput id="razaoSocial" name="razaoSocial" label="Razão Social" value={formData.razaoSocial} onChange={handleChange} required disabled={isAnalyzing} />
+                            <TextInput id="nomeFantasia" name="nomeFantasia" label="Nome Fantasia" value={formData.nomeFantasia} onChange={handleChange} required disabled={isAnalyzing}/>
+                            <TextInput id="cnpj" name="cnpj" label="CNPJ" value={formData.cnpj} onChange={handleChange} required placeholder="00.000.000/0000-00" disabled={isAnalyzing}/>
+                            <TextInput id="inscricaoEstadual" name="inscricaoEstadual" label="Inscrição Estadual (se houver)" value={formData.inscricaoEstadual} onChange={handleChange} disabled={isAnalyzing}/>
+                            <div className="sm:col-span-2">
+                                <TextInput id="enderecoComercial" name="enderecoComercial" label="Endereço Comercial Completo" value={formData.enderecoComercial} onChange={handleChange} required disabled={isAnalyzing}/>
+                            </div>
+                            <TextInput id="cidade" name="cidade" label="Cidade" value={formData.cidade} onChange={handleChange} required disabled={isAnalyzing}/>
+                            <TextInput id="uf" name="uf" label="UF" value={formData.uf} onChange={handleChange} required placeholder="Ex: SP" disabled={isAnalyzing}/>
+                            <TextInput id="cep" name="cep" label="CEP" value={formData.cep} onChange={handleChange} required placeholder="00000-000" disabled={isAnalyzing}/>
+                            <TextInput id="telefoneComercial" name="telefoneComercial" type="tel" label="Telefone Comercial" value={formData.telefoneComercial} onChange={handleChange} required />
+                            <TextInput id="emailContato" name="emailContato" type="email" label="E-mail de Contato da Empresa" value={formData.emailContato} onChange={handleChange} required />
+                       
+                            <div className="sm:col-span-2 border-t mt-4 pt-6">
+                                <h3 className="text-base font-semibold text-gray-600 -mb-2">Dados do Responsável Legal</h3>
+                            </div>
+                            <TextInput id="responsavelNomeCompleto" name="responsavelNomeCompleto" label="Nome Completo" value={formData.responsavelNomeCompleto} onChange={handleChange} required disabled={isAnalyzing} />
+                            <TextInput id="responsavelCpf" name="responsavelCpf" label="CPF" value={formData.responsavelCpf} onChange={handleChange} required placeholder="000.000.000-00" disabled={isAnalyzing} />
+                            <TextInput id="dataNascimento" name="dataNascimento" type="date" label="Data de Nascimento" value={formData.dataNascimento} onChange={handleChange} required disabled={isAnalyzing} />
+                            <TextInput id="responsavelCargo" name="responsavelCargo" label="Cargo/Função" value={formData.responsavelCargo} onChange={handleChange} required />
+                            <TextInput id="responsavelCelular" name="responsavelCelular" type="tel" label="Celular/WhatsApp" value={formData.responsavelCelular} onChange={handleChange} required />
+                            <TextInput id="responsavelEmail" name="responsavelEmail" type="email" label="E-mail Pessoal" value={formData.responsavelEmail} onChange={handleChange} required />
+                        </div>
+                    </div>
+
+                    {/* 2. Dados Bancários */}
+                    <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
+                        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">2. Dados Bancários</h2>
+                        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                            <TextInput id="banco" name="banco" label="Banco (Nome e Código)" value={formData.banco} onChange={handleChange} required placeholder="Ex: 341 - Itaú Unibanco S.A." />
+                            <TextInput id="agencia" name="agencia" label="Agência" value={formData.agencia} onChange={handleChange} required />
+                            <TextInput id="conta" name="conta" label="Conta com dígito" value={formData.conta} onChange={handleChange} required />
+                            <div>
+                                <label htmlFor="tipoConta" className="block text-sm font-medium text-gray-700 mb-1">Tipo de Conta <span className="text-red-500 ml-1">*</span></label>
+                                <select id="tipoConta" name="tipoConta" value={formData.tipoConta} onChange={handleChange} required className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm">
+                                    <option value="">Selecione...</option>
+                                    <option value="corrente">Corrente</option>
+                                    <option value="pj">PJ</option>
+                                    <option value="digital">Digital</option>
+                                </select>
+                            </div>
+                            <div className="sm:col-span-2">
+                                <TextInput id="titularConta" name="titularConta" label="Titular da Conta (Nome/Razão Social e CPF/CNPJ)" value={formData.titularConta} onChange={handleChange} required />
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {/* 3. Informações Contratuais */}
+                    <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
+                        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">3. Informações Contratuais</h2>
+                        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                            <TextInput id="dataInicio" name="dataInicio" type="date" label="Data de Início das Atividades" value={formData.dataInicio} onChange={handleChange} required />
+                            <TextInput id="gestorDireto" name="gestorDireto" label="Gestor Direto na Intelliway" value={formData.gestorDireto} onChange={handleChange} required />
+                            <TextInput id="areaProjeto" name="areaProjeto" label="Área/Projeto" value={formData.areaProjeto} onChange={handleChange} required />
+                            <TextInput id="centroCusto" name="centroCusto" label="Centro de Custo" value={formData.centroCusto} onChange={handleChange} required />
+                            <TextInput id="valorMensal" name="valorMensal" label="Valor Mensal do Contrato (R$)" value={formData.valorMensal} onChange={handleChange} required placeholder="Ex: 10000.00"/>
+                            <div>
+                                <label htmlFor="formaPagamento" className="block text-sm font-medium text-gray-700 mb-1">Forma de Pagamento <span className="text-red-500 ml-1">*</span></label>
+                                <select id="formaPagamento" name="formaPagamento" value={formData.formaPagamento} onChange={handleChange} required className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm">
+                                    <option value="">Selecione...</option>
+                                    <option value="pix">PIX</option>
+                                    <option value="transferencia">Transferência Bancária</option>
+                                    <option value="outro">Outro</option>
+                                </select>
+                            </div>
+                            {formData.formaPagamento === 'outro' && (
+                                <TextInput id="formaPagamentoOutro" name="formaPagamentoOutro" label="Qual?" value={formData.formaPagamentoOutro} onChange={handleChange} required />
+                            )}
+                            <TextInput id="dataLimiteNF" name="dataLimiteNF" type="date" label="Data Limite para Envio da NF" value={formData.dataLimiteNF} onChange={handleChange} required />
+                            <TextInput id="dataPrevistaPagamento" name="dataPrevistaPagamento" type="date" label="Previsão de Vencimento do Contrato" value={formData.dataPrevistaPagamento} onChange={handleChange} required />
+                        </div>
+                    </div>
+
+                    {/* 4. Upload de Documentos Adicionais */}
+                    <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
+                        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">4. Upload de Documentos Adicionais</h2>
+                        <div className="space-y-6">
+                            <FileUpload id="graduacao" title="Diploma de Graduação" onFilesChange={(files) => handleFilePersistence(files, FileCategory.GRADUACAO)} />
+                            <FileUpload id="certificacoes" title="Certificações, Pós-graduação, etc." onFilesChange={(files) => handleFilePersistence(files, FileCategory.CERTIFICACOES_POS_OUTROS)} />
+                        </div>
+                    </div>
+                    
+                    {/* 5. Declaração */}
+                    <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
+                        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">5. Declaração</h2>
+                        <div className="flex items-start">
+                            <div className="flex items-center h-5">
+                                <input
+                                    id="declaracao"
+                                    name="declaracao"
+                                    type="checkbox"
+                                    checked={formData.declaracao}
+                                    onChange={handleChange}
+                                    className="focus:ring-cyan-500 h-4 w-4 text-cyan-600 border--gray-300 rounded"
+                                />
+                            </div>
+                            <div className="ml-3 text-sm">
+                                <label htmlFor="declaracao" className="font-medium text-gray-700">
+                                    Declaro que todas as informações fornecidas são verdadeiras e precisas.
+                                </label>
+                                <p className="text-gray-500">Ao marcar esta caixa, você concorda com os termos de prestação de serviço e a política de privacidade da empresa.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="pt-5">
+                        <div className="flex justify-end">
+                            <button
+                                type="submit"
+                                disabled={isSubmitting || !formData.declaracao}
+                                className="inline-flex justify-center py-3 px-8 border border-transparent shadow-sm text-base font-medium rounded-md text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
+                            >
+                                {isSubmitting ? 'Enviando...' : 'Finalizar Cadastro'}
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </main>
         </div>
-      </div>
     );
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-100 py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl mx-auto">
-        <div className="relative mb-10">
-            <button
-                onClick={() => navigate(-1)}
-                className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center text-sm font-medium text-gray-600 hover:text-cyan-600 transition-colors"
-                aria-label="Voltar para a página anterior"
-            >
-                <ChevronLeftIcon />
-                Voltar
-            </button>
-            <header className="text-center">
-                <IntelliwayLogo className="h-12 w-auto mx-auto" />
-                <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight mt-4">Ficha de Cadastro – Colaborador PJ</h1>
-            </header>
-        </div>
-        
-        <form onSubmit={handleSubmit} className="space-y-6">
-           <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">1. Dados da Empresa (Pessoa Jurídica)</h2>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-              <TextInput id="razaoSocial" name="razaoSocial" label="Razão Social" value={formData.razaoSocial} onChange={handleInputChange} required />
-              <TextInput id="nomeFantasia" name="nomeFantasia" label="Nome Fantasia" value={formData.nomeFantasia} onChange={handleInputChange} required />
-              <TextInput id="cnpj" name="cnpj" label="CNPJ" value={formData.cnpj} onChange={handleInputChange} required />
-              <TextInput id="inscricaoEstadual" name="inscricaoEstadual" label="Inscrição Estadual (se houver)" value={formData.inscricaoEstadual} onChange={handleInputChange} />
-              <div className="sm:col-span-2">
-                <TextInput id="enderecoComercial" name="enderecoComercial" label="Endereço Comercial" value={formData.enderecoComercial} onChange={handleInputChange} required />
-              </div>
-              <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-5 gap-6">
-                <div className="sm:col-span-3"><TextInput id="cidade" name="cidade" label="Cidade" value={formData.cidade} onChange={handleInputChange} required /></div>
-                <div className="sm:col-span-1"><TextInput id="uf" name="uf" label="UF" value={formData.uf} onChange={handleInputChange} required /></div>
-                <div className="sm:col-span-1"><TextInput id="cep" name="cep" label="CEP" value={formData.cep} onChange={handleInputChange} required /></div>
-              </div>
-              <TextInput id="telefoneComercial" name="telefoneComercial" type="tel" label="Telefone Comercial" value={formData.telefoneComercial} onChange={handleInputChange} required />
-              <TextInput id="emailContato" name="emailContato" type="email" label="E-mail de Contato" value={formData.emailContato} onChange={handleInputChange} required />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">2. Dados do Responsável Legal</h2>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-              <TextInput id="responsavelNomeCompleto" name="responsavelNomeCompleto" label="Nome Completo" value={formData.responsavelNomeCompleto} onChange={handleInputChange} required />
-              <TextInput id="responsavelCpf" name="responsavelCpf" label="CPF" value={formData.responsavelCpf} onChange={handleInputChange} required />
-              <TextInput id="dataNascimento" name="dataNascimento" type="date" label="Data de Nascimento" value={formData.dataNascimento} onChange={handleInputChange} required />
-              <TextInput id="responsavelCargo" name="responsavelCargo" label="Cargo/Função" value={formData.responsavelCargo} onChange={handleInputChange} required />
-              <TextInput id="responsavelCelular" name="responsavelCelular" type="tel" label="Celular/WhatsApp" value={formData.responsavelCelular} onChange={handleInputChange} required />
-              <TextInput id="responsavelEmail" name="responsavelEmail" type="email" label="E-mail" value={formData.responsavelEmail} onChange={handleInputChange} required />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">3. Dados Bancários para Pagamento</h2>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-              <TextInput id="banco" name="banco" label="Banco" value={formData.banco} onChange={handleInputChange} required />
-              <TextInput id="agencia" name="agencia" label="Agência" value={formData.agencia} onChange={handleInputChange} required />
-              <TextInput id="conta" name="conta" label="Conta" value={formData.conta} onChange={handleInputChange} required />
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Conta</label>
-                <div className="flex items-center space-x-4">
-                  {[{label: 'Corrente', value: 'corrente'}, {label: 'PJ', value: 'pj'}, {label: 'Digital', value: 'digital'}].map(opt => (
-                    <label key={opt.value} className="flex items-center"><input type="radio" name="tipoConta" value={opt.value} checked={formData.tipoConta === opt.value} onChange={handleInputChange} className="h-4 w-4 text-cyan-600 border-gray-300 focus:ring-cyan-500" /><span className="ml-2 text-sm text-gray-700">{opt.label}</span></label>
-                  ))}
-                </div>
-              </div>
-              <div className="sm:col-span-2"><TextInput id="titularConta" name="titularConta" label="Titular da Conta" value={formData.titularConta} onChange={handleInputChange} required /></div>
-            </div>
-          </div>
-          
-          <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">4. Informações Contratuais</h2>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-              <TextInput id="dataInicio" name="dataInicio" type="date" label="Data de Início na Intelliway" value={formData.dataInicio} onChange={handleInputChange} required />
-              <TextInput id="gestorDireto" name="gestorDireto" label="Gestor Direto" value={formData.gestorDireto} onChange={handleInputChange} required />
-              <TextInput id="areaProjeto" name="areaProjeto" label="Área/Projeto" value={formData.areaProjeto} onChange={handleInputChange} required />
-              <TextInput id="centroCusto" name="centroCusto" label="Centro de Custo" value={formData.centroCusto} onChange={handleInputChange} required />
-              <div className="sm:col-span-2">
-                <TextInput id="valorMensal" name="valorMensal" label="Valor Mensal da Prestação de Serviços: R$" value={formData.valorMensal} onChange={handleInputChange} required />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Forma de Pagamento</label>
-                <div className="flex items-center space-x-4">
-                  {[{label: 'PIX', value: 'pix'}, {label: 'Transferência', value: 'transferencia'}, {label: 'Outro', value: 'outro'}].map(opt => (
-                    <label key={opt.value} className="flex items-center"><input type="radio" name="formaPagamento" value={opt.value} checked={formData.formaPagamento === opt.value} onChange={handleInputChange} className="h-4 w-4 text-cyan-600 border-gray-300 focus:ring-cyan-500" /><span className="ml-2 text-sm text-gray-700">{opt.label}</span></label>
-                  ))}
-                </div>
-              </div>
-              {formData.formaPagamento === 'outro' && (
-                <div className="sm:col-span-2"><TextInput id="formaPagamentoOutro" name="formaPagamentoOutro" label="Qual?" value={formData.formaPagamentoOutro} onChange={handleInputChange} required /></div>
-              )}
-              <TextInput id="dataLimiteNF" name="dataLimiteNF" type="date" label="Data limite para envio da NF" value={formData.dataLimiteNF} onChange={handleInputChange} required />
-              <TextInput id="dataPrevistaPagamento" name="dataPrevistaPagamento" type="date" label="Data prevista de pagamento" value={formData.dataPrevistaPagamento} onChange={handleInputChange} required />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">5. Documentos Anexos (obrigatórios)</h2>
-            <div className="space-y-6">
-                <FileUpload id="contratoSocialMei" title="Contrato Social / MEI" onFilesChange={handleFileChange(FileCategory.CONTRATO_SOCIAL_MEI)} />
-                <FileUpload id="graduacao" title="Graduação" onFilesChange={handleFileChange(FileCategory.GRADUACAO)} />
-                <FileUpload id="certificacoesPosOutros" title="Certificações / Pós / Outros" onFilesChange={handleFileChange(FileCategory.CERTIFICACOES_POS_OUTROS)} />
-            </div>
-          </div>
-          
-          <div className="bg-white p-6 sm:p-8 rounded-lg shadow-md">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">6. Declaração</h2>
-            <div className="flex items-start">
-              <div className="flex items-center h-5">
-                <input id="declaracao" name="declaracao" type="checkbox" checked={formData.declaracao} onChange={handleInputChange} className="focus:ring-cyan-500 h-4 w-4 text-cyan-600 border-gray-300 rounded" />
-              </div>
-              <div className="ml-3 text-sm">
-                <label htmlFor="declaracao" className="font-medium text-gray-700">
-                  Declaro que as informações acima são verdadeiras e que estou ciente de que o pagamento dos serviços está condicionado à emissão da nota fiscal dentro do prazo estabelecido pela Intelliway Tecnologia.
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-4">
-            <button
-              type="submit"
-              disabled={isSubmitting || !formData.declaracao}
-              className="inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
-            >
-              {isSubmitting ? (
-                <><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Enviando...</>
-              ) : 'Enviar Cadastro'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
 };
 
 export default Cadastro;

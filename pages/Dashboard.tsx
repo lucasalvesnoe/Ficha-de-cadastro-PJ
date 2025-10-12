@@ -1,13 +1,29 @@
 import React, { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom'; // Importa Link
 import { usePJData } from '../hooks/usePJData';
-import { differenceInDays, parseISO, isSameMonth, isAfter } from 'date-fns';
+// FIX: Added `isSameMonth` to date-fns imports to resolve 'Cannot find name' errors.
+import { differenceInDays, parseISO, isAfter, startOfMonth, isBefore, getDay, isSameMonth } from 'date-fns';
+import { FormData, NFStatus } from '../types';
 
 import Sidebar from '../components/Sidebar';
 import KPICard from '../components/KPICard';
 import ContractsChart from '../components/ContractsChart';
-import PJTable from '../components/PJTable';
 import AgeGroupChart from '../components/AgeGroupChart';
 import BirthdaysCard from '../components/BirthdaysCard';
+
+// Mock de estado de NFs, que será substituído por uma lógica real na página de NFs
+const useMockInvoiceStatus = (data: FormData[]) => {
+    return useMemo(() => {
+        const statuses: Record<string, NFStatus> = {};
+        data.forEach((pj, index) => {
+            if (index % 4 === 0) statuses[pj.cnpj] = NFStatus.VALIDADA;
+            else if (index % 3 === 0) statuses[pj.cnpj] = NFStatus.ATRASADA;
+            else statuses[pj.cnpj] = NFStatus.PENDENTE;
+        });
+        return statuses;
+    }, [data]);
+};
+
 
 const LinkIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -15,8 +31,21 @@ const LinkIcon = () => (
     </svg>
 );
 
+const ExportIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+    </svg>
+);
+
+const ImportIcon = () => (
+     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+    </svg>
+);
+
+
 const Dashboard: React.FC = () => {
-    const { data, loading } = usePJData();
+    const { data, loading, importData } = usePJData();
     const [copySuccess, setCopySuccess] = useState('');
 
     const copyLinkToClipboard = () => {
@@ -28,6 +57,54 @@ const Dashboard: React.FC = () => {
             setCopySuccess('Falha ao copiar.');
         });
     };
+    
+    const handleExport = () => {
+        const jsonData = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonData], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'dados_pjs.json';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result;
+                if (typeof text === 'string') {
+                    const importedJson = JSON.parse(text);
+                    if (Array.isArray(importedJson) && (importedJson.length === 0 || importedJson[0].cnpj)) {
+                        importData(importedJson);
+                        alert(`${importedJson.length} registros importados com sucesso!`);
+                    } else {
+                        throw new Error('Formato do arquivo inválido.');
+                    }
+                }
+            } catch (error) {
+                console.error("Erro ao importar dados:", error);
+                alert("Falha ao importar. Verifique se o arquivo JSON é válido.");
+            }
+        };
+        // FIX: Changed `readText` to `readAsText`, which is the correct method name for FileReader.
+        reader.readAsText(file);
+    };
+
+    const triggerImport = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = (e) => handleImport(e as unknown as React.ChangeEvent<HTMLInputElement>);
+        input.click();
+    };
+
 
     const activeData = useMemo(() => {
         if (!data) return [];
@@ -35,16 +112,22 @@ const Dashboard: React.FC = () => {
         return data.filter(p => !p.dataFim || isAfter(parseISO(p.dataFim), today));
     }, [data]);
 
+    const mockInvoiceStatuses = useMockInvoiceStatus(activeData);
+
     const kpis = useMemo(() => {
         if (!data || data.length === 0) {
-            return { headCount: 0, expiringSoon: 0, turnover: '0.0%', daysOffAvg: 0, admitidosMes: 0, demitidosMes: 0 };
+            return { headCount: 0, expiringSoon: 0, admitidosMes: 0, demitidosMes: 0, nfsPendentes: 0, nfsAtrasadas: 0, totalValidadoMes: 'R$ 0,00' };
         }
 
         const today = new Date();
+        const startOfCurrentMonth = startOfMonth(today);
 
         const expiringSoon = activeData.filter(pj => {
-            const contractEndDate = parseISO(pj.dataPrevistaPagamento);
-            return differenceInDays(contractEndDate, today) <= 30 && differenceInDays(contractEndDate, today) >= 0;
+            if (!pj.dataPrevistaPagamento) return false;
+            try {
+                const contractEndDate = parseISO(pj.dataPrevistaPagamento);
+                return differenceInDays(contractEndDate, today) <= 30 && differenceInDays(contractEndDate, today) >= 0;
+            } catch { return false; }
         }).length;
 
         const admitidosMes = data.filter(pj => {
@@ -58,20 +141,31 @@ const Dashboard: React.FC = () => {
                 return pj.dataFim && isSameMonth(parseISO(pj.dataFim), today);
             } catch (e) { return false; }
         }).length;
-
-        // Lógica de Turnover e Days Off simulada
-        const turnover = 5.2; 
-        const daysOffAvg = 18;
+        
+        // Novos KPIs de NF
+        let nfsPendentes = 0;
+        let nfsAtrasadas = 0;
+        let totalValidadoMes = 0;
+        
+        activeData.forEach(pj => {
+            const status = mockInvoiceStatuses[pj.cnpj];
+            if (status === NFStatus.PENDENTE) nfsPendentes++;
+            else if (status === NFStatus.ATRASADA) nfsAtrasadas++;
+            else if (status === NFStatus.VALIDADA) {
+                totalValidadoMes += parseFloat(pj.valorMensal);
+            }
+        });
 
         return {
             headCount: activeData.length,
             expiringSoon,
-            turnover: `${turnover.toFixed(1)}%`,
-            daysOffAvg,
             admitidosMes,
-            demitidosMes
+            demitidosMes,
+            nfsPendentes,
+            nfsAtrasadas,
+            totalValidadoMes: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalValidadoMes)
         };
-    }, [data, activeData]);
+    }, [data, activeData, mockInvoiceStatuses]);
 
     if (loading) {
         return <div className="flex h-screen items-center justify-center">Carregando...</div>;
@@ -81,28 +175,33 @@ const Dashboard: React.FC = () => {
         <div className="flex h-screen bg-slate-100">
             <Sidebar />
             <main className="flex-1 overflow-y-auto p-8">
-                <header className="mb-8 flex flex-wrap justify-between items-center gap-4">
+                <header className="mb-8 flex flex-wrap justify-between items-start gap-4">
                     <div>
                         <h1 className="text-3xl font-bold text-gray-900">Dashboard de Gestão PJ</h1>
                         <p className="text-gray-600 mt-1">Visão geral dos seus colaboradores Pessoa Jurídica.</p>
                     </div>
-                    <button
-                        onClick={copyLinkToClipboard}
-                        className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 transition-all"
-                    >
-                        <LinkIcon />
-                        {copySuccess || 'Copiar Link de Cadastro'}
-                    </button>
+                    <div className="flex flex-wrap gap-3">
+                         <button onClick={handleExport} className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 transition-all"> <ExportIcon /> Exportar Dados </button>
+                         <button onClick={triggerImport} className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 transition-all"> <ImportIcon /> Importar Dados </button>
+                        <button onClick={copyLinkToClipboard} className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 transition-all"> <LinkIcon /> {copySuccess || 'Copiar Link de Cadastro'} </button>
+                    </div>
                 </header>
                 
-                {/* KPI Cards */}
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    <KPICard title="Head Count" value={kpis.headCount.toString()} />
+                {/* KPI Cards de Colaboradores */}
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">Colaboradores</h2>
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+                    <KPICard title="Head Count Ativo" value={kpis.headCount.toString()} />
                     <KPICard title="Contratos a Vencer (30d)" value={kpis.expiringSoon.toString()} />
                     <KPICard title="Admitidos no Mês" value={kpis.admitidosMes.toString()} />
                     <KPICard title="Demitidos no Mês" value={kpis.demitidosMes.toString()} />
-                    <KPICard title="Turnover (Anual)" value={kpis.turnover} />
-                    <KPICard title="Média de Days Off" value={`${kpis.daysOffAvg} dias`} />
+                </div>
+
+                 {/* KPI Cards de Notas Fiscais */}
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">Notas Fiscais (Mês Atual)</h2>
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    <Link to="/notas-fiscais"><KPICard title="NFs Pendentes" value={kpis.nfsPendentes.toString()} /></Link>
+                    <Link to="/notas-fiscais"><KPICard title="NFs Atrasadas" value={kpis.nfsAtrasadas.toString()} /></Link>
+                    <Link to="/notas-fiscais"><KPICard title="Total Validado no Mês" value={kpis.totalValidadoMes} /></Link>
                 </div>
                 
                 {/* Charts and Tables */}
@@ -122,9 +221,6 @@ const Dashboard: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="mt-8">
-                    <PJTable data={data} />
-                </div>
             </main>
         </div>
     );
