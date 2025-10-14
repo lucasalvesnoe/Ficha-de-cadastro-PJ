@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePJData } from '../hooks/usePJData';
 import { FormData, Documento, FileCategory } from '../types';
@@ -80,7 +80,8 @@ const Cadastro: React.FC = () => {
     const [analysisErrorContract, setAnalysisErrorContract] = useState('');
     const [analysisMessage, setAnalysisMessage] = useState('');
 
-     // Generic handler to store uploaded files in formData
+
+     // Generic handler for non-AI file uploads
     const handleFilePersistence = async (files: File[], category: FileCategory) => {
         if (files.length === 0) return;
         const file = files[0];
@@ -102,9 +103,10 @@ const Cadastro: React.FC = () => {
         }
     };
 
-    // Generic function to handle AI-powered document analysis
+    // Generic function to handle AI-powered document analysis AND file persistence
     const handleDocumentAnalysis = async (
         file: File,
+        category: FileCategory,
         promptText: string,
         schema: any,
         setIsAnalyzing: React.Dispatch<React.SetStateAction<boolean>>,
@@ -124,6 +126,7 @@ const Cadastro: React.FC = () => {
 
         try {
             const base64Data = await fileToBase64(file);
+            
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
             const imagePart = {
@@ -142,7 +145,24 @@ const Cadastro: React.FC = () => {
             });
             
             const extractedData = JSON.parse(response.text);
-            setFormData(prev => ({ ...prev, ...extractedData }));
+            
+            const newDocument: Documento = {
+                nome: file.name,
+                categoria: category,
+                conteudo: base64Data,
+                mimeType: file.type,
+            };
+            
+            // Schedule the form data update to occur after the current render cycle.
+            // This ensures the browser has time to process the re-enabling of the inputs before filling them.
+            setTimeout(() => {
+                 setFormData(prev => ({ 
+                    ...prev, 
+                    ...extractedData,
+                    documentos: [...(prev.documentos || []).filter(d => d.categoria !== category), newDocument],
+                }));
+            }, 50);
+
 
         } catch (error)
         {
@@ -150,13 +170,13 @@ const Cadastro: React.FC = () => {
             setAnalysisError('Falha ao extrair dados. Por favor, preencha manualmente.');
         } finally {
             clearInterval(intervalId);
+            // This will trigger the first render to re-enable inputs
             setIsAnalyzing(false);
             setAnalysisMessage('');
         }
     };
 
     const handleCnpjFileChange = (newFiles: File[]) => {
-        handleFilePersistence(newFiles, FileCategory.CNPJ);
         const file = newFiles[0];
         if (!file) return;
 
@@ -173,30 +193,29 @@ const Cadastro: React.FC = () => {
                 cep: { type: Type.STRING },
             },
         };
-        handleDocumentAnalysis(file, prompt, schema, setIsAnalyzingCNPJ, setAnalysisErrorCNPJ);
+        handleDocumentAnalysis(file, FileCategory.CNPJ, prompt, schema, setIsAnalyzingCNPJ, setAnalysisErrorCNPJ);
     };
     
     const handleContractFileChange = (newFiles: File[]) => {
-        handleFilePersistence(newFiles, FileCategory.CONTRATO_SOCIAL_MEI);
         const file = newFiles[0];
         if (!file) return;
 
-        const prompt = 'Analise a imagem deste Contrato Social ou Certificado MEI. Extraia os dados da empresa (Razão Social, CNPJ, Endereço, Cidade, UF, CEP) e também os dados do responsável legal (Nome Completo, CPF e Data de Nascimento). A data de nascimento deve estar no formato YYYY-MM-DD. Retorne em formato JSON.';
+        const prompt = 'Analise este documento (Contrato Social ou Certificado MEI). Localize e extraia os dados da empresa e, com especial atenção, os dados do sócio-administrador ou responsável legal. É crucial que você encontre o nome completo, CPF e data de nascimento do responsável. Se a data de nascimento não estiver explícita, procure pela data de nascimento em cláusulas de qualificação dos sócios. Retorne todos os dados em formato JSON, com a data no formato AAAA-MM-DD.';
         const schema = {
             type: Type.OBJECT,
             properties: {
-                razaoSocial: { type: Type.STRING },
-                cnpj: { type: Type.STRING },
-                enderecoComercial: { type: Type.STRING },
-                cidade: { type: Type.STRING },
-                uf: { type: Type.STRING },
-                cep: { type: Type.STRING },
-                responsavelNomeCompleto: { type: Type.STRING },
-                responsavelCpf: { type: Type.STRING },
-                dataNascimento: { type: Type.STRING },
+                razaoSocial: { type: Type.STRING, description: 'Razão social completa da empresa.' },
+                cnpj: { type: Type.STRING, description: 'Número do CNPJ da empresa, formatado.' },
+                enderecoComercial: { type: Type.STRING, description: 'Endereço completo da sede da empresa.' },
+                cidade: { type: Type.STRING, description: 'Cidade da sede da empresa.' },
+                uf: { type: Type.STRING, description: 'Sigla do estado (UF) da sede da empresa.' },
+                cep: { type: Type.STRING, description: 'CEP do endereço da empresa.' },
+                responsavelNomeCompleto: { type: Type.STRING, description: 'Nome completo do sócio-administrador ou responsável legal.' },
+                responsavelCpf: { type: Type.STRING, description: 'CPF do responsável legal.' },
+                dataNascimento: { type: Type.STRING, description: 'Data de nascimento do responsável legal, no formato AAAA-MM-DD.' },
             },
         };
-        handleDocumentAnalysis(file, prompt, schema, setIsAnalyzingContract, setAnalysisErrorContract);
+        handleDocumentAnalysis(file, FileCategory.CONTRATO_SOCIAL_MEI, prompt, schema, setIsAnalyzingContract, setAnalysisErrorContract);
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
